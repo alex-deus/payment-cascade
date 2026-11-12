@@ -15,20 +15,13 @@ from apps.payment.provider.base import PaymentStatus
 from apps.users.models import User
 
 
-__all__ = ["make_payment"]
+__all__ = ["make_payment", "finalize_attempt", "schedule_payment"]
 
 logger = logging.getLogger("celery.tasks")
 
 
 def schedule_payment(payment_id: str | UUID) -> None:
-    def publish() -> None:
-        try:
-            make_payment.apply_async(args=[str(payment_id)], task_id=f"make_payment:{payment_id}")
-        except Exception:
-            # Периодическое восстановление повторит отправку после сбоя брокера.
-            logger.exception("Unable to schedule payment %s", payment_id)
-
-    transaction.on_commit(publish)
+    transaction.on_commit(lambda: make_payment.apply_async(args=[str(payment_id)], task_id=f"make_payment:{payment_id}"))
 
 
 @shared_task(base=TracedTask, bind=True, ignore_result=True)
