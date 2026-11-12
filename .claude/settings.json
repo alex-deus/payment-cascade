@@ -1,0 +1,29 @@
+{
+  "model": "opusplan",
+  "effortLevel": "medium",
+  "permissions": {
+    "allow": [
+      "Bash(./manage.py *)",
+      "Bash(ruff *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(grep -v '^\\\\s*$')"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-write-lint.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

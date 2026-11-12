@@ -1,0 +1,14 @@
+services:
+  certbot:
+    image: certbot/certbot
+    container_name: payment_certbot
+    command: "certonly -d ${DOMAIN} -v --standalone --agree-tos --register-unsafely-without-email --non-interactive"
+    restart: no
+    ports: [ "80:80", "443:443" ]
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes: [ "payment_certbot:/etc/letsencrypt" ]
+
+volumes:
+  payment_certbot:
+    name: payment_certbot

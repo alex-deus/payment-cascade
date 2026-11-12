@@ -1,0 +1,90 @@
+@startuml
+title Каскадная обработка платежа
+autonumber
+
+actor "Инициатор задачи" as Caller
+participant "Celery: make_payment" as Worker
+database "PostgreSQL" as DB
+participant "Платёжный провайдер" as Provider
+participant "Задачи обслуживания" as Maintenance
+
+note over Caller, Worker
+  Задача принимает ID уже существующего платежа.
+  API создания платежа пока не ставит её в очередь.
+end note
+
+Caller -> Worker: make_payment(payment_id)
+loop Пока можно перейти к следующему провайдеру
+  Worker -> DB: Заблокировать платёж в транзакции
+  alt Платёж отсутствует, завершён или уже обрабатывается
+    Worker --> Caller: Завершить задачу
+    break
+    end
+  else Некорректная сумма
+    Worker -> DB: Платёж → failed
+    break
+    end
+  else Нет активных непроверенных провайдеров
+    Worker -> DB: Снять резерв, если есть; платёж → failed
+    break
+    end
+  else Доступен провайдер
+    Worker -> DB: Выбрать первого по slug из активных,
+    note right of DB: исключив уже использованных
+    alt Средства ещё не зарезервированы
+      Worker -> DB: Заблокировать пользователя; проверить доступный баланс
+      alt Недостаточно средств
+        Worker -> DB: Платёж → failed
+        break
+        end
+      else Средств достаточно
+        Worker -> DB: Увеличить frozen_balance на сумму платежа
+      end
+    end
+    Worker -> DB: Создать попытку pending; платёж → pending
+    Worker -> DB: Зафиксировать транзакцию
+    Worker -> Provider: create(payment)
+    alt SUCCESS
+      Provider --> Worker: SUCCESS
+      Worker -> DB: Заблокировать платёж и попытку; проверить состояние
+      Worker -> DB: При допустимом состоянии: попытка и платёж → succeed,
+      note right of DB: списать сумму и снять резерв
+      break
+      end
+    else FAILED
+      Provider --> Worker: FAILED
+      Worker -> DB: Заблокировать платёж и попытку; проверить состояние
+      alt Платёж ещё pending и резерв сохранён
+        Worker -> DB: Попытка → failed; сохранить резерв
+        note over Worker: Следующая итерация выбирает другого провайдера
+      else Платёж timed_out и резерв сохранён
+        Worker -> DB: Попытка и платёж → failed; снять резерв
+        break
+        end
+      else Состояние уже изменилось
+        break
+        end
+      end
+    else PENDING или неизвестный результат / исключение
+      Provider --> Worker: PENDING или ошибка
+      note over Worker, DB: Задача завершается; попытка и резерв сохраняются
+      break
+      end
+    end
+  end
+end
+
+== Фоновые задачи обслуживания ==
+Maintenance -> DB: Устаревшие попытки pending → timed_out
+Maintenance -> DB: Устаревшие платежи created/pending → timed_out
+note right of DB
+  Резерв снимается, только если у платежа нет
+  попыток со статусом, отличным от failed.
+end note
+Maintenance -> DB: Отключить провайдеров, превысивших лимит
+note right of DB: Подсчитываются failed-попытки за последний час
+note over Maintenance
+  Запуск обработки тайм-аутов платежей в расписании не настроен.
+  Повторная проверка ожидающего результата провайдера не реализована.
+end note
+@enduml
