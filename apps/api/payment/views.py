@@ -1,6 +1,7 @@
 import logging
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils.translation import gettext_lazy as _
 from django_essentials_kit.rest_framework.views import SerializerViewSetMixin, generate_filter_parameters
@@ -72,10 +73,12 @@ class PaymentViewSet(SerializerViewSetMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data, context={"request": request})
 
         serializer.is_valid(raise_exception=True)
-        instance, is_created = self.perform_create(serializer)  # type: models.Payment, bool
 
-        if is_created:
-            ...
+        with transaction.atomic():
+            instance, is_created = self.perform_create(serializer)  # type: models.Payment, bool
+
+            if is_created:
+                schedule_payment(instance.pk)
 
         status_code = status.HTTP_201_CREATED if is_created else status.HTTP_202_ACCEPTED
         headers = self.get_success_headers(serializer.data)
